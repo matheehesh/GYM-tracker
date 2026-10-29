@@ -13,8 +13,8 @@ public:
     
     AutoDetectState getState() const;
     ExerciseType getDetectedExercise() const;
-    int getCurrentSequenceStep() const;  // 0=at P0, 1=at P1
-    float getConfidence() const;         // 0-100%
+    int getCurrentSequenceStep() const;  
+    float getConfidence() const;         
     uint32_t getRepCount(ExerciseType type) const;
     uint32_t getTotalReps() const;
     void resetCounts();
@@ -23,14 +23,14 @@ private:
     const UserProfileData* _profile;
     AutoDetectState _state;
     ExerciseType _detectedExercise;
-    int _sequenceStep;           // 0=at P0, 1=at P1
+    int _sequenceStep;          
     float _confidence;
     uint32_t _repCounts[MAX_EXERCISES];
     
     // Candidate tracking
-    int _candidateCounts[MAX_EXERCISES]; // Consecutive P0 match counts per exercise
-    int _p1MatchCount;                   // Consecutive P1 matches for transition debounce
-    int _p0ReturnCount;                  // Consecutive P0 matches for rep completion
+    int _candidateCounts[MAX_EXERCISES]; 
+    int _p1MatchCount;                   
+    int _p0ReturnCount;                  
     
     // Timing
     unsigned long _candidateStartTime;
