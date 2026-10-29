@@ -1,0 +1,29 @@
+#ifndef SQUAT_DETECTOR_H
+#define SQUAT_DETECTOR_H
+
+#include "Config.h"
+#include "Types.h"
+
+class SquatDetector {
+public:
+    void begin(const SquatCalibration& cal);
+    void update(const SensorFeatures& features);
+    void reset();
+    uint32_t getCount() const;
+    SquatState getState() const;
+    const char* getStateName() const;
+    void setCalibration(const SquatCalibration& cal);
+
+private:
+    SquatState _state;
+    uint32_t _count;
+    SquatCalibration _cal;
+    
+    unsigned long _stateEntryTime;
+    unsigned long _repStartTime;
+    float _maxAngleReached;
+    float _lastPitch;
+    float _lastGyroMag;
+};
+
+#endif // SQUAT_DETECTOR_H

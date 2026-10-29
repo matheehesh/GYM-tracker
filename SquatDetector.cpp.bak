@@ -1,0 +1,127 @@
+#include "SquatDetector.h"
+
+const char* squatStateName(SquatState s) {
+    switch (s) {
+        case SQUAT_STANDING: return "STANDING";
+        case SQUAT_DESCENDING: return "DESCENDING";
+        case SQUAT_BOTTOM: return "BOTTOM";
+        case SQUAT_ASCENDING: return "ASCENDING";
+        case SQUAT_COMPLETE: return "COMPLETE";
+        default: return "UNKNOWN";
+    }
+}
+
+void SquatDetector::begin(const SquatCalibration& cal) {
+    _cal = cal;
+    reset();
+}
+
+void SquatDetector::setCalibration(const SquatCalibration& cal) {
+    _cal = cal;
+}
+
+void SquatDetector::reset() {
+    _state = SQUAT_STANDING;
+    _count = 0;
+    _stateEntryTime = 0;
+    _repStartTime = 0;
+    _maxAngleReached = 0.0f;
+    _lastPitch = 0.0f;
+    _lastGyroMag = 0.0f;
+}
+
+uint32_t SquatDetector::getCount() const {
+    return _count;
+}
+
+SquatState SquatDetector::getState() const {
+    return _state;
+}
+
+const char* SquatDetector::getStateName() const {
+    return squatStateName(_state);
+}
+
+void SquatDetector::update(const SensorFeatures& features) {
+    unsigned long now = features.timestamp;
+    float pitch = features.pitch;
+    
+    SquatState oldState = _state;
+
+    // Timeout: If stuck in DESCENDING/BOTTOM/ASCENDING for > maxRepDurationMs, reset to STANDING without counting.
+    if (_state != SQUAT_STANDING) {
+        if (now - _repStartTime > _cal.maxRepDurationMs) {
+            _state = SQUAT_STANDING;
+            _stateEntryTime = now;
+        }
+    }
+
+    if (pitch > _maxAngleReached && _state != SQUAT_STANDING) {
+        _maxAngleReached = pitch;
+    }
+
+    switch (_state) {
+        case SQUAT_STANDING:
+            if (pitch > _cal.descendThreshold + _cal.hysteresis && features.gyroMagnitude > _cal.gyroDescendMin) {
+                _state = SQUAT_DESCENDING;
+                _repStartTime = now;
+                _stateEntryTime = now;
+                _maxAngleReached = pitch;
+            }
+            break;
+
+        case SQUAT_DESCENDING:
+            if (pitch > _cal.bottomThreshold + _cal.hysteresis && features.gyroMagnitude < _lastGyroMag) {
+                _state = SQUAT_BOTTOM;
+                _stateEntryTime = now;
+            } else if (pitch < _cal.descendThreshold - _cal.hysteresis) {
+                // Fell back to standing prematurely
+                _state = SQUAT_STANDING;
+                _stateEntryTime = now;
+            }
+            break;
+
+        case SQUAT_BOTTOM:
+            if (pitch < _lastPitch && pitch < _cal.ascendThreshold - _cal.hysteresis && features.gyroMagnitude > _cal.gyroAscendMin) {
+                _state = SQUAT_ASCENDING;
+                _stateEntryTime = now;
+            }
+            break;
+
+        case SQUAT_ASCENDING:
+            if (pitch < _cal.standingRecoveryThreshold - _cal.hysteresis) {
+                _state = SQUAT_COMPLETE;
+                _stateEntryTime = now;
+            } else if (pitch > _cal.bottomThreshold + _cal.hysteresis) {
+                // Fell back down
+                _state = SQUAT_BOTTOM;
+                _stateEntryTime = now;
+            }
+            break;
+
+        case SQUAT_COMPLETE:
+            {
+                unsigned long duration = now - _repStartTime;
+                float depthReq = _cal.bottomThreshold * SQUAT_DEFAULT_MIN_DEPTH_FRACTION;
+                
+                if (duration >= _cal.minRepDurationMs && duration <= _cal.maxRepDurationMs && 
+                    _maxAngleReached >= depthReq) {
+                    _count++;
+                    DBG_COUNT("[SQUAT] COUNT = %d\n", _count);
+                }
+                
+                _state = SQUAT_STANDING;
+                _stateEntryTime = now;
+            }
+            break;
+    }
+
+    _lastPitch = pitch;
+    _lastGyroMag = features.gyroMagnitude;
+
+    if (_state != oldState) {
+        if (_state != SQUAT_STANDING || oldState == SQUAT_COMPLETE) { // Don't print timeout resets unless needed
+            DBG_STATE("[SQUAT] %s -> %s  angle=%.1f\n", squatStateName(oldState), squatStateName(_state), pitch);
+        }
+    }
+}

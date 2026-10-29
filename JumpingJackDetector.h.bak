@@ -1,0 +1,28 @@
+#ifndef JUMPING_JACK_DETECTOR_H
+#define JUMPING_JACK_DETECTOR_H
+
+#include "Types.h"
+#include "Config.h"
+
+// NOTE: A hip sensor CANNOT observe arms. This detector uses the body's vertical bounce pattern.
+
+class JumpingJackDetector {
+public:
+    void begin(const JumpingJackCalibration& cal);
+    void update(const SensorFeatures& features);
+    void reset();
+    uint32_t getCount() const;
+    JumpingJackState getState() const;
+    const char* getStateName() const;
+    void setCalibration(const JumpingJackCalibration& cal);
+private:
+    JumpingJackState _state;
+    uint32_t _count;
+    JumpingJackCalibration _cal;
+    unsigned long _stateEntryTime;
+    unsigned long _cycleStartTime;
+    int _consecutiveValid;
+    float _peakAccelInCycle;
+};
+
+#endif // JUMPING_JACK_DETECTOR_H

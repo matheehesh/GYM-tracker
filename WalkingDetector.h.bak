@@ -1,0 +1,29 @@
+#ifndef WALKING_DETECTOR_H
+#define WALKING_DETECTOR_H
+
+#include "Config.h"
+#include "Types.h"
+
+class WalkingDetector {
+public:
+    void begin(const WalkingCalibration& cal);
+    void update(const SensorFeatures& features);
+    void reset();
+    uint32_t getCount() const;
+    WalkingState getState() const;
+    const char* getStateName() const;
+    void setCalibration(const WalkingCalibration& cal);
+
+private:
+    WalkingState _state;
+    uint32_t _count;
+    WalkingCalibration _cal;
+
+    unsigned long _lastStepTime;
+    unsigned long _stateEntryTime;
+    float _currentPeak;
+    float _currentValley;
+    uint32_t _consecutiveSteps;
+};
+
+#endif // WALKING_DETECTOR_H

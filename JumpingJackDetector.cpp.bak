@@ -1,0 +1,127 @@
+#include "JumpingJackDetector.h"
+
+const char* jumpingJackStateName(JumpingJackState s) {
+    switch (s) {
+        case JJ_READY: return "READY";
+        case JJ_LAUNCHING: return "LAUNCHING";
+        case JJ_AIRBORNE: return "AIRBORNE";
+        case JJ_LANDING: return "LANDING";
+        case JJ_RECOVERY: return "RECOVERY";
+        default: return "UNKNOWN";
+    }
+}
+
+void JumpingJackDetector::begin(const JumpingJackCalibration& cal) {
+    setCalibration(cal);
+    reset();
+}
+
+void JumpingJackDetector::setCalibration(const JumpingJackCalibration& cal) {
+    _cal = cal;
+}
+
+void JumpingJackDetector::reset() {
+    _state = JJ_READY;
+    _count = 0;
+    _stateEntryTime = millis();
+    _cycleStartTime = 0;
+    _consecutiveValid = 0;
+    _peakAccelInCycle = 0.0f;
+}
+
+uint32_t JumpingJackDetector::getCount() const {
+    return _count;
+}
+
+JumpingJackState JumpingJackDetector::getState() const {
+    return _state;
+}
+
+const char* JumpingJackDetector::getStateName() const {
+    return jumpingJackStateName(_state);
+}
+
+void JumpingJackDetector::update(const SensorFeatures& features) {
+    unsigned long now = features.timestamp;
+    unsigned long stateDuration = now - _stateEntryTime;
+    
+    // Timeout if stuck in mid-state
+    if (_state != JJ_READY && stateDuration > STATE_TIMEOUT_MS) {
+        _state = JJ_READY;
+        _stateEntryTime = now;
+        _consecutiveValid = 0;
+    }
+
+    switch (_state) {
+        case JJ_READY:
+            // Waiting for a launch (upward impulse)
+            if (features.accelMagnitude > _cal.jumpThreshold && features.gyroMagnitude > _cal.gyroThreshold) {
+                _state = JJ_LAUNCHING;
+                _stateEntryTime = now;
+                _cycleStartTime = now;
+                _peakAccelInCycle = features.accelMagnitude;
+                DBG_STATE("[JUMPING JACK] READY -> LAUNCHING  accelMag=%.2f\n", features.accelMagnitude);
+            }
+            break;
+
+        case JJ_LAUNCHING:
+            if (features.accelMagnitude > _peakAccelInCycle) {
+                _peakAccelInCycle = features.accelMagnitude;
+            }
+            // Transition to Airborne when weightlessness is detected
+            if (features.accelMagnitude < _cal.airborneThreshold) {
+                _state = JJ_AIRBORNE;
+                _stateEntryTime = now;
+                DBG_STATE("[JUMPING JACK] LAUNCHING -> AIRBORNE  accelMag=%.2f\n", features.accelMagnitude);
+            } else if (stateDuration > 200) {
+                // False trigger, no low-g seen
+                _state = JJ_READY;
+                _stateEntryTime = now;
+            }
+            break;
+
+        case JJ_AIRBORNE:
+            // Wait for landing impact
+            if (features.accelMagnitude > _cal.landingThreshold) {
+                _state = JJ_LANDING;
+                _stateEntryTime = now;
+                DBG_STATE("[JUMPING JACK] AIRBORNE -> LANDING  accelMag=%.2f\n", features.accelMagnitude);
+            } else if (stateDuration > 500) {
+                // Timeout in air
+                _state = JJ_READY;
+                _stateEntryTime = now;
+            }
+            break;
+
+        case JJ_LANDING:
+            if (features.accelMagnitude > _peakAccelInCycle) {
+                _peakAccelInCycle = features.accelMagnitude;
+            }
+            // Wait for acceleration to settle back to baseline
+            if (features.accelMagnitude < _cal.accelBaseline + _cal.hysteresis && 
+                features.accelMagnitude > _cal.accelBaseline - _cal.hysteresis) {
+                _state = JJ_RECOVERY;
+                _stateEntryTime = now;
+                DBG_STATE("[JUMPING JACK] LANDING -> RECOVERY\n");
+            }
+            break;
+
+        case JJ_RECOVERY:
+            // Allow settling time before validating the cycle
+            if (stateDuration > _cal.recoveryMs) {
+                unsigned long cycleDuration = now - _cycleStartTime;
+                if (cycleDuration >= _cal.minCycleTimeMs && cycleDuration <= _cal.maxCycleTimeMs) {
+                    _consecutiveValid++;
+                    if (_consecutiveValid >= JJ_DEFAULT_CONSEC_REQUIRED) {
+                        _count++;
+                        DBG_COUNT("[JUMPING JACK] COUNT = %d\n", _count);
+                    }
+                } else {
+                    _consecutiveValid = 0; // Invalid cycle, reset consecutive count
+                }
+                _state = JJ_READY;
+                _stateEntryTime = now;
+            }
+            break;
+    }
+}

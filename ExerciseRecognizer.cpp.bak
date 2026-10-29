@@ -1,0 +1,85 @@
+#include "ExerciseRecognizer.h"
+#include <Arduino.h>
+
+void ExerciseRecognizer::begin(const UserProfileData* profile) {
+    _profile = profile;
+    _lastClassification = EXERCISE_UNKNOWN;
+    _classificationConfidence = 0;
+}
+
+void ExerciseRecognizer::setProfile(const UserProfileData* profile) {
+    _profile = profile;
+}
+
+ExerciseType ExerciseRecognizer::classify(const SensorFeatures& features) {
+    ExerciseType candidate = EXERCISE_UNKNOWN;
+
+    float jjThreshold = (_profile && _profile->jumpingJack.isCalibrated) 
+                        ? _profile->jumpingJack.jumpThreshold 
+                        : JJ_DEFAULT_JUMP_THRESHOLD;
+    
+    float squatRom = (_profile && _profile->squat.isCalibrated)
+                     ? _profile->squat.rangeOfMotion
+                     : SQUAT_DEFAULT_RANGE_OF_MOTION;
+    float squatStanding = (_profile && _profile->squat.isCalibrated)
+                     ? _profile->squat.standingAngle
+                     : SQUAT_DEFAULT_STANDING_ANGLE;
+    float squatThreshold = squatStanding + squatRom * 0.2f;
+
+    float walkAmp = (_profile && _profile->walking.isCalibrated)
+                    ? _profile->walking.peakToValleyAmplitude
+                    : WALK_DEFAULT_PEAK_TO_VALLEY;
+
+    // 1. Check orientation
+    if (features.pitch > 50.0f) {
+        candidate = EXERCISE_SIT_UP;
+    } else if (features.pitch < 30.0f) {
+        // Standing
+        if (features.accelMagVariance > 5.0f && features.accelMagPeak > jjThreshold) {
+            candidate = EXERCISE_JUMPING_JACK;
+        } else if (features.pitch > squatThreshold) {
+            candidate = EXERCISE_SQUAT;
+        } else if (features.peakCount > 0 && features.peakToValley > walkAmp * 0.5f) {
+            candidate = EXERCISE_WALKING;
+        } else {
+            candidate = EXERCISE_WALKING; // Default standing activity
+        }
+    }
+
+    if (candidate == _lastClassification) {
+        _classificationConfidence++;
+    } else {
+        _classificationConfidence = 0;
+        _lastClassification = candidate;
+    }
+
+    if (_classificationConfidence >= CONFIDENCE_THRESHOLD) {
+        return candidate;
+    }
+
+    return EXERCISE_UNKNOWN;
+}
+
+const char* exerciseTypeName(ExerciseType t) {
+    switch (t) {
+        case EXERCISE_WALKING: return "Walking";
+        case EXERCISE_SQUAT: return "Squats";
+        case EXERCISE_JUMPING_JACK: return "Jumping Jacks";
+        case EXERCISE_SIT_UP: return "Sit-ups";
+        default: return "Unknown";
+    }
+}
+
+const char* calPhaseName(CalibrationPhase p) {
+    switch (p) {
+        case CAL_PHASE_IDLE: return "IDLE";
+        case CAL_PHASE_WAITING: return "WAITING";
+        case CAL_PHASE_COUNTDOWN: return "COUNTDOWN";
+        case CAL_PHASE_SETTLING: return "SETTLING";
+        case CAL_PHASE_RECORDING: return "RECORDING";
+        case CAL_PHASE_PROCESSING: return "PROCESSING";
+        case CAL_PHASE_COMPLETE: return "COMPLETE";
+        case CAL_PHASE_FAILED: return "FAILED";
+        default: return "UNKNOWN";
+    }
+}

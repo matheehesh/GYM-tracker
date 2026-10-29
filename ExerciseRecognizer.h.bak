@@ -1,0 +1,19 @@
+#ifndef EXERCISE_RECOGNIZER_H
+#define EXERCISE_RECOGNIZER_H
+
+#include "Types.h"
+#include "Config.h"
+
+class ExerciseRecognizer {
+public:
+    void begin(const UserProfileData* profile);
+    ExerciseType classify(const SensorFeatures& features);
+    void setProfile(const UserProfileData* profile);
+private:
+    const UserProfileData* _profile;
+    ExerciseType _lastClassification;
+    int _classificationConfidence;
+    static const int CONFIDENCE_THRESHOLD = 5; // consecutive agreeing classifications
+};
+
+#endif

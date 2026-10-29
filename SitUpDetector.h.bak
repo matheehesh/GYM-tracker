@@ -1,0 +1,25 @@
+#ifndef SIT_UP_DETECTOR_H
+#define SIT_UP_DETECTOR_H
+
+#include "Types.h"
+#include "Config.h"
+
+class SitUpDetector {
+public:
+    void begin(const SitUpCalibration& cal);
+    void update(const SensorFeatures& features);
+    void reset();
+    uint32_t getCount() const;
+    SitUpState getState() const;
+    const char* getStateName() const;
+    void setCalibration(const SitUpCalibration& cal);
+private:
+    SitUpState _state;
+    uint32_t _count;
+    SitUpCalibration _cal;
+    unsigned long _stateEntryTime;
+    unsigned long _repStartTime;
+    float _minAngleReached;  // track closest to top angle
+};
+
+#endif // SIT_UP_DETECTOR_H

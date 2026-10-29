@@ -1,0 +1,124 @@
+#include "WalkingDetector.h"
+
+const char* walkingStateName(WalkingState s) {
+    switch (s) {
+        case WALK_IDLE: return "IDLE";
+        case WALK_STEP_RISING: return "STEP_RISING";
+        case WALK_STEP_PEAK: return "STEP_PEAK";
+        case WALK_STEP_FALLING: return "STEP_FALLING";
+        case WALK_REFRACTORY: return "REFRACTORY";
+        default: return "UNKNOWN";
+    }
+}
+
+void WalkingDetector::begin(const WalkingCalibration& cal) {
+    _cal = cal;
+    reset();
+}
+
+void WalkingDetector::setCalibration(const WalkingCalibration& cal) {
+    _cal = cal;
+}
+
+void WalkingDetector::reset() {
+    _state = WALK_IDLE;
+    _count = 0;
+    _lastStepTime = 0;
+    _stateEntryTime = 0;
+    _currentPeak = 0.0f;
+    _currentValley = 0.0f;
+    _consecutiveSteps = 0;
+}
+
+uint32_t WalkingDetector::getCount() const {
+    return _count;
+}
+
+WalkingState WalkingDetector::getState() const {
+    return _state;
+}
+
+const char* WalkingDetector::getStateName() const {
+    return walkingStateName(_state);
+}
+
+void WalkingDetector::update(const SensorFeatures& features) {
+    unsigned long now = features.timestamp;
+    float accel = features.verticalAccel;
+    
+    WalkingState oldState = _state;
+
+    // Timeout: if stopped walking, reset sequence
+    if (_lastStepTime > 0 && (now - _lastStepTime > _cal.maxStepIntervalMs)) {
+        _consecutiveSteps = 0;
+        if (_state != WALK_IDLE) {
+            _state = WALK_IDLE;
+        }
+    }
+
+    switch (_state) {
+        case WALK_IDLE:
+            if (accel > _cal.peakThreshold) {
+                _state = WALK_STEP_RISING;
+                _currentPeak = accel;
+            }
+            break;
+
+        case WALK_STEP_RISING:
+            if (accel > _currentPeak) {
+                _currentPeak = accel;
+            } else if (accel < _currentPeak) { 
+                // Value starts decreasing
+                _state = WALK_STEP_PEAK;
+            }
+            break;
+
+        case WALK_STEP_PEAK:
+            if (accel < _cal.valleyThreshold) {
+                _state = WALK_STEP_FALLING;
+                _currentValley = accel;
+            } else if (accel > _currentPeak) {
+                _currentPeak = accel; // Still rising?
+                _state = WALK_STEP_RISING;
+            }
+            break;
+
+        case WALK_STEP_FALLING:
+            if (accel < _currentValley) {
+                _currentValley = accel;
+            } else { 
+                // Value starts rising again
+                float amplitude = _currentPeak - _currentValley;
+                unsigned long timeSinceLast = (_lastStepTime == 0) ? _cal.minStepIntervalMs : (now - _lastStepTime);
+
+                if (amplitude >= _cal.peakToValleyAmplitude && timeSinceLast >= _cal.minStepIntervalMs) {
+                    // Valid step
+                    _consecutiveSteps++;
+                    if (_consecutiveSteps >= WALK_DEFAULT_CONSEC_STEPS_REQUIRED) {
+                        if (_consecutiveSteps == WALK_DEFAULT_CONSEC_STEPS_REQUIRED) {
+                            _count += WALK_DEFAULT_CONSEC_STEPS_REQUIRED;
+                        } else {
+                            _count++;
+                        }
+                        DBG_COUNT("[WALKING] COUNT = %d\n", _count);
+                    }
+                    _lastStepTime = now;
+                    _state = WALK_REFRACTORY;
+                    _stateEntryTime = now;
+                } else {
+                    _state = WALK_IDLE;
+                }
+            }
+            break;
+
+        case WALK_REFRACTORY:
+            if (now - _stateEntryTime >= _cal.refractoryMs) {
+                _state = WALK_IDLE;
+            }
+            break;
+    }
+
+    if (_state != oldState) {
+        DBG_STATE("[WALKING] %s -> %s  accel=%.2f\n", walkingStateName(oldState), walkingStateName(_state), accel);
+    }
+}

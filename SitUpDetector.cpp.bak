@@ -1,0 +1,111 @@
+#include "SitUpDetector.h"
+
+const char* sitUpStateName(SitUpState s) {
+    switch (s) {
+        case SITUP_LYING: return "LYING";
+        case SITUP_RISING: return "RISING";
+        case SITUP_TOP: return "TOP";
+        case SITUP_DESCENDING: return "DESCENDING";
+        case SITUP_COMPLETE: return "COMPLETE";
+        default: return "UNKNOWN";
+    }
+}
+
+void SitUpDetector::begin(const SitUpCalibration& cal) {
+    setCalibration(cal);
+    reset();
+}
+
+void SitUpDetector::setCalibration(const SitUpCalibration& cal) {
+    _cal = cal;
+}
+
+void SitUpDetector::reset() {
+    _state = SITUP_LYING;
+    _count = 0;
+    _stateEntryTime = millis();
+    _repStartTime = 0;
+    _minAngleReached = 999.0f;
+}
+
+uint32_t SitUpDetector::getCount() const {
+    return _count;
+}
+
+SitUpState SitUpDetector::getState() const {
+    return _state;
+}
+
+const char* SitUpDetector::getStateName() const {
+    return sitUpStateName(_state);
+}
+
+void SitUpDetector::update(const SensorFeatures& features) {
+    unsigned long now = features.timestamp;
+    unsigned long stateDuration = now - _stateEntryTime;
+
+    // Timeout: if stuck in a mid-state too long, reset to LYING
+    if (_state != SITUP_LYING && stateDuration > _cal.maxRepDurationMs) {
+        _state = SITUP_LYING;
+        _stateEntryTime = now;
+    }
+
+    float pitch = features.pitch;
+
+    switch (_state) {
+        case SITUP_LYING:
+            // From high lying angle to lower rising angle
+            if (pitch < _cal.risingThreshold && features.gyroMagnitude > _cal.gyroRiseMin) {
+                _state = SITUP_RISING;
+                _stateEntryTime = now;
+                _repStartTime = now;
+                _minAngleReached = pitch;
+                DBG_STATE("[SIT-UP] LYING -> RISING  angle=%.1f\n", pitch);
+            }
+            break;
+
+        case SITUP_RISING:
+            if (pitch < _minAngleReached) {
+                _minAngleReached = pitch;
+            }
+            if (pitch < _cal.topThreshold) {
+                _state = SITUP_TOP;
+                _stateEntryTime = now;
+                DBG_STATE("[SIT-UP] RISING -> TOP  angle=%.1f\n", pitch);
+            }
+            break;
+
+        case SITUP_TOP:
+            if (pitch < _minAngleReached) {
+                _minAngleReached = pitch;
+            }
+            // From low top angle to higher descending angle
+            if (pitch > _cal.descendingThreshold && features.gyroMagnitude > _cal.gyroDescendMin) {
+                _state = SITUP_DESCENDING;
+                _stateEntryTime = now;
+                DBG_STATE("[SIT-UP] TOP -> DESCENDING  angle=%.1f\n", pitch);
+            }
+            break;
+
+        case SITUP_DESCENDING:
+            // Going back to large lying angle
+            if (pitch > _cal.lyingRecoveryThreshold) {
+                _state = SITUP_COMPLETE;
+                _stateEntryTime = now;
+                DBG_STATE("[SIT-UP] DESCENDING -> LYING  angle=%.1f\n", pitch);
+            }
+            break;
+
+        case SITUP_COMPLETE:
+            {
+                unsigned long duration = now - _repStartTime;
+                if (duration >= _cal.minRepDurationMs && duration <= _cal.maxRepDurationMs && _minAngleReached <= _cal.topThreshold) {
+                    _count++;
+                    DBG_COUNT("[SIT-UP] COUNT = %d\n", _count);
+                }
+                _state = SITUP_LYING;
+                _stateEntryTime = now;
+            }
+            break;
+    }
+}
